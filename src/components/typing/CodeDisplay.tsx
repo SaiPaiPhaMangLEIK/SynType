@@ -69,16 +69,14 @@ export default function CodeDisplay({
   const [hoveredLine, setHoveredLine] = useState<number | null>(null);
   const codeLines = useMemo(() => code.split("\n"), [code]);
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLPreElement>) => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const y = e.clientY - rect.top;
-      const lineH = fontSize * 1.8;
-      const idx = Math.floor((y - 24) / lineH);
-      setHoveredLine(idx >= 0 && idx < codeLines.length ? idx : null);
-    },
-    [codeLines.length, fontSize]
-  );
+  // Precompute where each line starts in the flat char array
+  const lineStartPositions = useMemo(() => {
+    const positions: number[] = [0];
+    for (let i = 0; i < code.length - 1; i++) {
+      if (code[i] === "\n") positions.push(i + 1);
+    }
+    return positions;
+  }, [code]);
 
   const lineDescription = useMemo(() => {
     if (hoveredLine === null) return null;
@@ -92,7 +90,7 @@ export default function CodeDisplay({
   useEffect(() => { setSelectedCharIdx(null); }, [code]);
 
   const handleClick = useCallback(
-    (e: React.MouseEvent<HTMLPreElement>) => {
+    (e: React.MouseEvent<HTMLDivElement>) => {
       // Only act if a word span (data-idx) was clicked — ignore whitespace / empty areas
       const el = (e.target as HTMLElement).closest("[data-idx]");
       if (!el) return;
@@ -154,6 +152,7 @@ export default function CodeDisplay({
       }
 
       if (ch === "\n") {
+        // Only render the cursor indicator; the newline itself is implicit in line-based layout
         return (
           <React.Fragment key={idx}>
             {isCursor && (
@@ -167,7 +166,6 @@ export default function CodeDisplay({
                 }}
               />
             )}
-            {"\n"}
           </React.Fragment>
         );
       }
@@ -238,24 +236,24 @@ export default function CodeDisplay({
     }
   }, [wordDesc, lineDescription, hoveredLine, selectedToken, selectedTokenInfo, onDescriptionChange]);
 
+  const lineNumWidth = `${Math.max(2, String(codeLines.length).length)}ch`;
+
   return (
-    <pre
+    <div
       style={{
         fontSize: `${fontSize}px`,
         lineHeight: "1.8",
         fontFamily: "var(--font-jetbrains-mono, 'JetBrains Mono', monospace)",
         margin: 0,
-        padding: "24px 32px",
-        overflowX: "auto",
-        whiteSpace: "pre",
-        tabSize: 4,
+        paddingTop: "16px",
+        paddingBottom: "16px",
         background: "#1e1e1c",
         borderRadius: "0 0 6px 6px",
         minHeight: "200px",
         cursor: "text",
         userSelect: "none",
+        overflowX: "auto",
       }}
-      onMouseMove={handleMouseMove}
       onMouseLeave={() => setHoveredLine(null)}
       onClick={handleClick}
     >
@@ -265,7 +263,62 @@ export default function CodeDisplay({
           50% { opacity: 0; }
         }
       `}</style>
-      {chars}
-    </pre>
+      {codeLines.map((line, lineIdx) => {
+        const lineStart = lineStartPositions[lineIdx];
+        // slice includes the \n position (cursor-only element) for non-last lines
+        const lineChars = chars.slice(lineStart, lineStart + line.length + 1);
+
+        return (
+          <div
+            key={lineIdx}
+            style={{ display: "flex", alignItems: "baseline" }}
+            onMouseEnter={() => setHoveredLine(lineIdx)}
+          >
+            {/* Gutter */}
+            <span
+              style={{
+                flexShrink: 0,
+                width: lineNumWidth,
+                textAlign: "right",
+                paddingLeft: "24px",
+                paddingRight: "20px",
+                color: "#4e4e4c",
+                fontSize: "0.88em",
+                userSelect: "none",
+              }}
+            >
+              {lineIdx + 1}
+            </span>
+            {/* Subtle gutter separator */}
+            <span
+              style={{
+                flexShrink: 0,
+                width: "1px",
+                alignSelf: "stretch",
+                background: "#2a2a28",
+                marginRight: "20px",
+              }}
+            />
+            {/* Code */}
+            <pre
+              style={{
+                margin: 0,
+                padding: 0,
+                paddingRight: "32px",
+                fontFamily: "inherit",
+                fontSize: "inherit",
+                lineHeight: "inherit",
+                whiteSpace: "pre",
+                tabSize: 4,
+                background: "transparent",
+                flex: 1,
+              }}
+            >
+              {lineChars}
+            </pre>
+          </div>
+        );
+      })}
+    </div>
   );
 }
