@@ -51,8 +51,9 @@ interface HandProps {
 }
 
 function Hand({ side, activeFingerGlobal }: HandProps) {
-  // For right hand display, fingers go pinky→thumb (right to left), so we reverse
-  const displayFingers = side === "right" ? [4, 3, 2, 1, 0] : [0, 1, 2, 3, 4];
+  // Left hand: P R M I T (pinky on far left, thumb on far right)
+  // Right hand: T I M R P (thumb on far left, pinky on far right)
+  const displayFingers = [0, 1, 2, 3, 4];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
@@ -63,10 +64,13 @@ function Hand({ side, activeFingerGlobal }: HandProps) {
         {displayFingers.map((fi) => {
           const globalFi = side === "left" ? fi : fi + 5;
           const isActive = activeFingerGlobal === globalFi;
+          // Right hand is displayed reversed (pinky→thumb left to right), so mirror the
+          // fingerIdx so that colors/labels match the correct anatomical finger.
+          const fingerIdx = side === "right" ? 4 - fi : fi;
           return (
             <Finger
               key={fi}
-              fingerIdx={fi}
+              fingerIdx={fingerIdx}
               isActive={isActive}
             />
           );
