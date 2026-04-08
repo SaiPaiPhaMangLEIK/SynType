@@ -8,7 +8,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useAuth } from "@/hooks/useAuth";
 import { useKeyboardSound } from "@/hooks/useKeyboardSound";
 import { createClient } from "@/lib/supabase/client";
-import CodeDisplay from "@/components/typing/CodeDisplay";
+import CodeDisplay, { DescriptionInfo } from "@/components/typing/CodeDisplay";
 import LiveStats from "@/components/typing/LiveStats";
 import SummaryScreen from "@/components/typing/SummaryScreen";
 import KeyboardDashboard from "@/components/keyboard/KeyboardDashboard";
@@ -64,6 +64,7 @@ export default function PracticePage() {
   const [showGenerate, setShowGenerate] = useState(false);
   const [showCustomSnippet, setShowCustomSnippet] = useState(false);
   const [editingSnippetId, setEditingSnippetId] = useState<string | null>(null);
+  const [descInfo, setDescInfo] = useState<DescriptionInfo | null>(null);
 
   const saveCustomSnippets = useCallback((all: Snippet[]) => {
     const custom = all.filter((s) => s.id.startsWith("custom-") || s.id.startsWith("generated-"));
@@ -182,8 +183,16 @@ export default function PracticePage() {
       if (state.isComplete) return;
       if (showSettings || showGenerate || showCustomSnippet) return;
 
-      if (e.key === "Tab") e.preventDefault();
-      if (e.key === " " && e.target === document.body) e.preventDefault();
+      // Prevent all navigation/scroll keys from hijacking the page while typing
+      const scrollKeys = [" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End", "Tab"];
+      if (scrollKeys.includes(e.key)) e.preventDefault();
+
+      // Steal focus away from any interactive element (sidebar buttons, etc.)
+      // so the user's keypresses always go to the typing engine, not the UI
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active !== document.body && active.tagName !== "INPUT" && active.tagName !== "TEXTAREA") {
+        active.blur();
+      }
 
       if (e.key.length === 1 || e.key === "Backspace" || e.key === "Enter" || e.key === "Tab") {
         const key = e.key === "Enter" ? "\n" : e.key;
@@ -522,7 +531,6 @@ export default function PracticePage() {
               <div
                 ref={containerRef}
                 style={{ flex: 1, overflowY: "auto", cursor: "text" }}
-                onClick={() => containerRef.current?.focus()}
               >
                 <CodeDisplay
                   code={snippet.code}
@@ -531,7 +539,58 @@ export default function PracticePage() {
                   errorMap={state.errorMap}
                   isLocked={state.isLocked}
                   fontSize={settings.fontSize}
+                  onDescriptionChange={setDescInfo}
                 />
+              </div>
+
+              {/* ── Description bar — always above the dashboard ── */}
+              <div style={{
+                flexShrink: 0,
+                height: "28px",
+                backgroundColor: "#141412",
+                borderTop: "1px solid #2a2a26",
+                borderBottom: "1px solid #2a2a26",
+                display: "flex",
+                alignItems: "center",
+                padding: "0 16px",
+                gap: "10px",
+                overflow: "hidden",
+              }}>
+                {descInfo ? (
+                  descInfo.mode === "word" ? (
+                    <>
+                      <span style={{
+                        fontSize: "9px", color: descInfo.color,
+                        border: `1px solid ${descInfo.color}55`,
+                        padding: "1px 5px", borderRadius: "3px",
+                        fontFamily: "monospace", flexShrink: 0,
+                      }}>
+                        {descInfo.label}
+                      </span>
+                      <code style={{ fontSize: "11px", color: descInfo.color, fontFamily: "var(--font-jetbrains-mono, monospace)", flexShrink: 0 }}>
+                        {descInfo.value}
+                      </code>
+                      <span style={{ color: "#2a2a26", fontSize: "10px", flexShrink: 0 }}>—</span>
+                      <span style={{ fontSize: "11px", color: "#8a7a60", fontFamily: "var(--font-jetbrains-mono, monospace)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {descInfo.text}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: "10px", color: "#3a3a36", fontFamily: "monospace", flexShrink: 0 }}>
+                        line {descInfo.lineNum}
+                      </span>
+                      <span style={{ color: "#2a2a26", fontSize: "10px", flexShrink: 0 }}>→</span>
+                      <span style={{ fontSize: "11px", color: "#8a7a60", fontFamily: "var(--font-jetbrains-mono, monospace)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {descInfo.text}
+                      </span>
+                    </>
+                  )
+                ) : (
+                  <span style={{ fontSize: "10px", color: "#2a2a26", fontFamily: "monospace" }}>
+                    hover a line · click a keyword to learn more
+                  </span>
+                )}
               </div>
 
               {/* Keyboard dashboard — always rendered so drag stays live */}
