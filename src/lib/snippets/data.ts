@@ -1440,6 +1440,240 @@ public:
     explanation:
       "RAII file wrapper that opens in the constructor and closes in the destructor, guaranteeing cleanup even on exceptions. Copy constructor and copy assignment are explicitly deleted to prevent double-close bugs. read_all uses istreambuf_iterator for efficient whole-file reads.",
   },
+  {
+    id: "py-consistent-hashing",
+    language: "python",
+    topic: "Consistent Hashing",
+    difficulty: "intermediate",
+    code: `import hashlib
+from bisect import bisect, insort
+
+class ConsistentHashRing:
+    def __init__(self, replicas=150):
+        self.replicas = replicas
+        self.ring: dict[int, str] = {}
+        self.sorted_keys: list[int] = []
+
+    def _hash(self, key: str) -> int:
+        return int(hashlib.md5(key.encode()).hexdigest(), 16)
+
+    def add_node(self, node: str) -> None:
+        for i in range(self.replicas):
+            h = self._hash(f"{node}:{i}")
+            self.ring[h] = node
+            insort(self.sorted_keys, h)
+
+    def remove_node(self, node: str) -> None:
+        for i in range(self.replicas):
+            h = self._hash(f"{node}:{i}")
+            del self.ring[h]
+            self.sorted_keys.remove(h)
+
+    def get_node(self, key: str) -> str:
+        if not self.ring:
+            raise ValueError("Ring is empty")
+        h = self._hash(key)
+        idx = bisect(self.sorted_keys, h) % len(self.sorted_keys)
+        return self.ring[self.sorted_keys[idx]]`,
+    explanation:
+      "Consistent hashing maps keys and nodes onto a virtual ring so that adding or removing a node only remaps a fraction of keys. Virtual nodes (replicas) spread load evenly. bisect finds the next clockwise node in O(log n), making it ideal for distributed caches and sharding.",
+  },
+  {
+    id: "py-circuit-breaker",
+    language: "python",
+    topic: "Circuit Breaker",
+    difficulty: "intermediate",
+    code: `import time
+from enum import Enum
+
+class State(Enum):
+    CLOSED    = "closed"
+    OPEN      = "open"
+    HALF_OPEN = "half_open"
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold=5, recovery_timeout=30):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout  = recovery_timeout
+        self.state             = State.CLOSED
+        self.failure_count     = 0
+        self.last_failure_time = 0.0
+
+    def call(self, func, *args, **kwargs):
+        if self.state == State.OPEN:
+            if time.monotonic() - self.last_failure_time > self.recovery_timeout:
+                self.state = State.HALF_OPEN
+            else:
+                raise RuntimeError("Circuit breaker is OPEN")
+        try:
+            result = func(*args, **kwargs)
+            self.failure_count = 0
+            self.state = State.CLOSED
+            return result
+        except Exception:
+            self.failure_count     += 1
+            self.last_failure_time  = time.monotonic()
+            if self.failure_count >= self.failure_threshold:
+                self.state = State.OPEN
+            raise`,
+    explanation:
+      "The circuit breaker prevents cascading failures by tracking consecutive errors. CLOSED means normal operation; after reaching the failure threshold the breaker trips OPEN, rejecting calls immediately. After the recovery timeout it enters HALF_OPEN to probe whether the downstream service has recovered.",
+  },
+  {
+    id: "py-gossip-protocol",
+    language: "python",
+    topic: "Gossip Protocol",
+    difficulty: "advanced",
+    code: `import random
+from dataclasses import dataclass, field
+
+@dataclass
+class Node:
+    node_id: str
+    data: dict  = field(default_factory=dict)
+    peers: list = field(default_factory=list)
+
+    def update(self, key: str, value, version: int) -> None:
+        self.data[key] = (value, version)
+
+    def gossip(self, fanout: int = 3) -> None:
+        targets = random.sample(self.peers, min(fanout, len(self.peers)))
+        for peer in targets:
+            self._merge(peer)
+
+    def _merge(self, peer: "Node") -> None:
+        for key, (value, version) in peer.data.items():
+            if key not in self.data or self.data[key][1] < version:
+                self.data[key] = (value, version)
+        for key, (value, version) in self.data.items():
+            if key not in peer.data or peer.data[key][1] < version:
+                peer.data[key] = (value, version)`,
+    explanation:
+      "Gossip (epidemic) protocol achieves eventual consistency without a central coordinator. Each node periodically picks a random subset of peers and exchanges state, keeping only the highest-versioned entry per key. Convergence is probabilistic but fast — O(log n) rounds suffice for full propagation.",
+  },
+  {
+    id: "py-distributed-lock",
+    language: "python",
+    topic: "Distributed Lock",
+    difficulty: "advanced",
+    code: `import time
+import threading
+from contextlib import contextmanager
+
+class DistributedLock:
+    def __init__(self):
+        self._store: dict[str, tuple[str, float]] = {}
+        self._mutex = threading.Lock()
+
+    def acquire(self, key: str, owner: str, ttl: float = 30.0) -> bool:
+        with self._mutex:
+            now = time.monotonic()
+            if key in self._store:
+                _, expires = self._store[key]
+                if now < expires:
+                    return False
+            self._store[key] = (owner, now + ttl)
+            return True
+
+    def release(self, key: str, owner: str) -> bool:
+        with self._mutex:
+            if self._store.get(key, (None,))[0] == owner:
+                del self._store[key]
+                return True
+            return False
+
+    @contextmanager
+    def lock(self, key: str, owner: str, ttl: float = 30.0):
+        if not self.acquire(key, owner, ttl):
+            raise RuntimeError(f"Could not acquire lock for {key!r}")
+        try:
+            yield
+        finally:
+            self.release(key, owner)`,
+    explanation:
+      "A TTL-based distributed lock prevents two processes from modifying shared state simultaneously. Owner identity ensures only the lock holder can release it, guarding against stale releases after crashes. The context manager provides safe acquire-release semantics identical to Python's threading.Lock.",
+  },
+  {
+    id: "py-two-phase-commit",
+    language: "python",
+    topic: "Two-Phase Commit",
+    difficulty: "advanced",
+    code: `from dataclasses import dataclass
+from enum import Enum
+
+class Vote(Enum):
+    COMMIT = "commit"
+    ABORT  = "abort"
+
+@dataclass
+class Participant:
+    name: str
+    ready: bool = True
+
+    def prepare(self, txn: str) -> Vote:
+        return Vote.COMMIT if self.ready else Vote.ABORT
+
+    def commit(self, txn: str) -> None:
+        print(f"[{self.name}] committed: {txn}")
+
+    def abort(self, txn: str) -> None:
+        print(f"[{self.name}] aborted: {txn}")
+
+class Coordinator:
+    def __init__(self, participants: list[Participant]):
+        self.participants = participants
+
+    def run(self, transaction: str) -> bool:
+        votes = [p.prepare(transaction) for p in self.participants]
+        if all(v == Vote.COMMIT for v in votes):
+            for p in self.participants:
+                p.commit(transaction)
+            return True
+        for p in self.participants:
+            p.abort(transaction)
+        return False`,
+    explanation:
+      "Two-phase commit (2PC) is an atomic commitment protocol. In Phase 1 the coordinator asks all participants to vote; a single ABORT vetoes the transaction. In Phase 2 the coordinator broadcasts the unanimous decision. This guarantees atomicity across nodes but blocks if the coordinator crashes between phases.",
+  },
+  {
+    id: "py-vector-clock",
+    language: "python",
+    topic: "Vector Clock",
+    difficulty: "advanced",
+    code: `from dataclasses import dataclass, field
+
+@dataclass
+class VectorClock:
+    node_id: str
+    clock: dict[str, int] = field(default_factory=dict)
+
+    def tick(self) -> None:
+        self.clock[self.node_id] = self.clock.get(self.node_id, 0) + 1
+
+    def send(self) -> dict[str, int]:
+        self.tick()
+        return dict(self.clock)
+
+    def receive(self, remote: dict[str, int]) -> None:
+        for node, ts in remote.items():
+            self.clock[node] = max(self.clock.get(node, 0), ts)
+        self.tick()
+
+    def happens_before(self, other: "VectorClock") -> bool:
+        all_nodes = set(self.clock) | set(other.clock)
+        return (
+            all(self.clock.get(n, 0) <= other.clock.get(n, 0) for n in all_nodes)
+            and self.clock != other.clock
+        )
+
+    def concurrent(self, other: "VectorClock") -> bool:
+        return (
+            not self.happens_before(other)
+            and not other.happens_before(self)
+        )`,
+    explanation:
+      "Vector clocks track causality in distributed systems where there is no global clock. Each node maintains a counter per peer. send increments the local counter before transmitting; receive merges by taking the element-wise maximum, then ticks. happens_before detects causal ordering; concurrent flags conflicting writes that require reconciliation.",
+  },
 ];
 
 export function getSnippetsByLanguage(language: string): Snippet[] {
